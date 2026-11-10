@@ -139,6 +139,12 @@ internal class MapWebView(
         evaluateJavascript("showSelection($selecting)", null)
     }
 
+    fun centerOn(point: Coordinates) {
+        if (ready && !released) {
+            evaluateJavascript("centerOn(${point.latitude}, ${point.longitude})", null)
+        }
+    }
+
     fun readCenter(onResult: (Coordinates?) -> Unit) {
         if (!ready || released) return
         evaluateJavascript("selectedPosition()") { result ->

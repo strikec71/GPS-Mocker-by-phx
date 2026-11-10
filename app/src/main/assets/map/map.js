@@ -83,3 +83,8 @@ function selectedPosition() {
     map.stop();
     return cameraPosition().slice(0, 2);
 }
+
+function centerOn(latitude, longitude) {
+    focused = true;
+    map.setView(mapPoint(latitude, longitude), Math.max(map.getZoom(), 16), { animate: false });
+}

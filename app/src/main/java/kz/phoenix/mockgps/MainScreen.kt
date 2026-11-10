@@ -20,6 +20,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,10 +30,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 private enum class MapMode { HOME, OVERVIEW, TEMPORARY_PICKER, PRESET_PICKER }
 
@@ -64,6 +67,13 @@ internal fun MainScreen(
     var mode by rememberSaveable { mutableStateOf(MapMode.HOME) }
     var draft by rememberSaveable(stateSaver = draftSaver) { mutableStateOf<LocationPreset?>(null) }
     val canMock = hasFinePermission && isMockApp
+    val context = LocalContext.current
+    val temporaryPosition = active?.takeIf { it.id == Prefs.TEMPORARY }?.coordinates
+    var temporaryAddress by remember(temporaryPosition) { mutableStateOf<String?>(null) }
+    LaunchedEffect(temporaryPosition) {
+        temporaryAddress = temporaryPosition?.let { reverseAddress(context, it) }
+    }
+    val activeLabel = temporaryAddress ?: active?.name
 
     if (mode == MapMode.HOME) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -77,9 +87,6 @@ internal fun MainScreen(
                     TextButton(onClick = { draft = LocationPreset(Prefs.INACTIVE, "") }) {
                         Text("+ Добавить точку")
                     }
-                }
-                if (active != null) {
-                    StopButton(onStop)
                 }
                 LazyColumn {
                     if (!hasFinePermission) {
@@ -111,7 +118,8 @@ internal fun MainScreen(
 
             HorizontalDivider()
             Column(Modifier.weight(0.45f)) {
-                PositionLabel(position, active != null)
+                PositionLabel(position, activeLabel)
+                if (active != null) StopButton(onStop)
                 LocationMap(
                     position = position,
                     mocked = active != null,
@@ -153,7 +161,7 @@ internal fun MainScreen(
         FullMapScreen(
             mode = mode,
             position = position,
-            mocked = active != null,
+            activeLabel = activeLabel,
             canMock = canMock,
             onBack = goBack,
             onPick = { mode = MapMode.TEMPORARY_PICKER },
@@ -201,7 +209,7 @@ private fun PresetSwitch(
 private fun FullMapScreen(
     mode: MapMode,
     position: Coordinates?,
-    mocked: Boolean,
+    activeLabel: String?,
     canMock: Boolean,
     onBack: () -> Unit,
     onPick: () -> Unit,
@@ -209,6 +217,7 @@ private fun FullMapScreen(
     onTemporary: (Coordinates) -> Unit,
     onStop: () -> Unit
 ) {
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     var camera by rememberSaveable { mutableStateOf<DoubleArray?>(null) }
     var webView by remember { mutableStateOf<MapWebView?>(null) }
     var reading by remember { mutableStateOf(false) }
@@ -235,17 +244,21 @@ private fun FullMapScreen(
             Text(
                 if (selecting) "Выбор точки" else "Карта",
                 style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(start = 12.dp)
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
             )
+            TextButton(onClick = { searchOpen = true }, enabled = webView != null) {
+                Text("Поиск адреса")
+            }
         }
         if (selecting) {
             Text("Переместите карту под маркером")
         } else {
-            PositionLabel(position, mocked)
+            PositionLabel(position, activeLabel)
         }
+        if (activeLabel != null) StopButton(onStop)
         LocationMap(
             position = position,
-            mocked = mocked,
+            mocked = activeLabel != null,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             interactive = true,
             selecting = selecting,
@@ -260,7 +273,6 @@ private fun FullMapScreen(
                 Button(onClick = onPick, enabled = ready, modifier = Modifier.fillMaxWidth()) {
                     Text("Выбрать точку")
                 }
-                if (mocked) StopButton(onStop)
             }
             MapMode.PRESET_PICKER -> {
                 Button(onClick = { readCenter(onSave) }, enabled = ready, modifier = Modifier.fillMaxWidth()) {
@@ -287,17 +299,28 @@ private fun FullMapScreen(
             MapMode.HOME -> Unit
         }
     }
+    if (searchOpen && webView != null) {
+        AddressSearchDialog(
+            onDismiss = { searchOpen = false },
+            onSelect = { coordinates ->
+                webView?.centerOn(coordinates)
+                searchOpen = false
+            }
+        )
+    }
 }
 
 @Composable
-private fun PositionLabel(position: Coordinates?, mocked: Boolean) {
+private fun PositionLabel(position: Coordinates?, activeLabel: String?) {
+    val coordinates = position?.let { String.format(Locale.ROOT, "%.5f, %.5f", it.latitude, it.longitude) }
     val label = when {
-        mocked -> "Подмена активна"
-        position != null -> "Текущее местоположение"
+        activeLabel != null && coordinates != null -> "Подмена активна: $activeLabel ($coordinates)"
+        activeLabel != null -> "Подмена активна: $activeLabel"
+        coordinates != null -> "Текущее местоположение: $coordinates"
         else -> "Местоположение пока недоступно"
     }
     Text(
-        position?.let { "$label: $it" } ?: label,
+        label,
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(vertical = 6.dp)
     )
