@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
                         presets = presets,
                         active = active,
                         position = active?.coordinates ?: devicePosition,
+                        searchOrigin = devicePosition,
                         hasFinePermission = hasFinePermission,
                         isMockApp = isMockApp,
                         onRequestPermission = ::requestLocationPermission,

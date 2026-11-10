@@ -54,6 +54,7 @@ internal fun MainScreen(
     presets: List<LocationPreset>,
     active: LocationPreset?,
     position: Coordinates?,
+    searchOrigin: Coordinates?,
     hasFinePermission: Boolean,
     isMockApp: Boolean,
     onRequestPermission: () -> Unit,
@@ -161,6 +162,7 @@ internal fun MainScreen(
         FullMapScreen(
             mode = mode,
             position = position,
+            searchOrigin = searchOrigin,
             activeLabel = activeLabel,
             canMock = canMock,
             onBack = goBack,
@@ -209,6 +211,7 @@ private fun PresetSwitch(
 private fun FullMapScreen(
     mode: MapMode,
     position: Coordinates?,
+    searchOrigin: Coordinates?,
     activeLabel: String?,
     canMock: Boolean,
     onBack: () -> Unit,
@@ -301,6 +304,7 @@ private fun FullMapScreen(
     }
     if (searchOpen && webView != null) {
         AddressSearchDialog(
+            searchOrigin = searchOrigin,
             onDismiss = { searchOpen = false },
             onSelect = { coordinates ->
                 webView?.centerOn(coordinates)

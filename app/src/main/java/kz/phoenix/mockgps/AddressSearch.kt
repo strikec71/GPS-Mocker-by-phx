@@ -3,6 +3,7 @@ package kz.phoenix.mockgps
 import android.content.Context
 import android.location.Address
 import android.location.Geocoder
+import android.location.Location
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import kotlin.math.cos
+
+private const val MAX_RESULTS = 5
+private const val NEARBY_RADIUS_METERS = 50_000
+private const val METERS_PER_LATITUDE_DEGREE = 111_000.0
 
 private data class AddressMatch(val label: String, val coordinates: Coordinates)
 
@@ -61,9 +67,66 @@ private suspend fun lookupAddresses(
     }
 }
 
+private fun List<Address>.toMatches(): List<AddressMatch> = mapNotNull { match ->
+    if (!match.hasLatitude() || !match.hasLongitude()) return@mapNotNull null
+    val label = match.fullLabel() ?: match.featureName ?: return@mapNotNull null
+    AddressMatch(label, Coordinates(match.latitude, match.longitude))
+}.distinct()
+
+private fun AddressMatch.distanceFrom(origin: Coordinates): Float {
+    val distance = FloatArray(1)
+    Location.distanceBetween(
+        origin.latitude, origin.longitude, coordinates.latitude, coordinates.longitude, distance
+    )
+    return distance[0]
+}
+
 @Suppress("DEPRECATION")
+private suspend fun findAddresses(
+    context: Context,
+    query: String,
+    origin: Coordinates?
+): List<AddressMatch>? {
+    if (origin == null) {
+        return lookupAddresses(context) { getFromLocationName(query, MAX_RESULTS) }?.toMatches()
+    }
+
+    fun nearby(addresses: List<Address>?): List<AddressMatch> = addresses.orEmpty().toMatches()
+        .map { it to it.distanceFrom(origin) }
+        .filter { (_, distance) -> distance <= NEARBY_RADIUS_METERS }
+        .sortedBy { (_, distance) -> distance }
+        .map { (match, _) -> match }
+
+    val latitudeDelta = NEARBY_RADIUS_METERS / METERS_PER_LATITUDE_DEGREE
+    val longitudeDelta = latitudeDelta / cos(Math.toRadians(origin.latitude))
+    val west = origin.longitude - longitudeDelta
+    val east = origin.longitude + longitudeDelta
+    if (west >= -180.0 && east <= 180.0) {
+        val regional = lookupAddresses(context) {
+            getFromLocationName(
+                query, MAX_RESULTS,
+                (origin.latitude - latitudeDelta).coerceAtLeast(-90.0), west,
+                (origin.latitude + latitudeDelta).coerceAtMost(90.0), east
+            )
+        }
+        nearby(regional).takeIf { it.isNotEmpty() }?.let { return it }
+    }
+
+    // Some providers treat bounds only as a hint. Retry with the device's city in the query.
+    val city = lookupAddresses(context) { getFromLocation(origin.latitude, origin.longitude, 1) }
+        ?.firstOrNull()?.locality
+    if (!city.isNullOrBlank() && !query.contains(city, ignoreCase = true)) {
+        val cityResults = lookupAddresses(context) { getFromLocationName("$query, $city", MAX_RESULTS) }
+        nearby(cityResults).takeIf { it.isNotEmpty() }?.let { return it }
+    }
+
+    return lookupAddresses(context) { getFromLocationName(query, MAX_RESULTS) }
+        ?.toMatches()?.sortedBy { it.distanceFrom(origin) }
+}
+
 @Composable
 internal fun AddressSearchDialog(
+    searchOrigin: Coordinates?,
     onDismiss: () -> Unit,
     onSelect: (Coordinates) -> Unit
 ) {
@@ -83,12 +146,8 @@ internal fun AddressSearchDialog(
         results = emptyList()
         status = "Ищем адрес…"
         scope.launch {
-            val matches = lookupAddresses(context) { getFromLocationName(address, 5) }
-            results = matches.orEmpty().mapNotNull { match ->
-                if (!match.hasLatitude() || !match.hasLongitude()) return@mapNotNull null
-                val label = match.fullLabel() ?: match.featureName ?: return@mapNotNull null
-                AddressMatch(label, Coordinates(match.latitude, match.longitude))
-            }.distinct()
+            val matches = findAddresses(context, address, searchOrigin)
+            results = matches.orEmpty()
             status = when {
                 matches == null -> "Поиск недоступен. Проверьте интернет и попробуйте ещё раз."
                 results.isEmpty() -> "Адрес не найден"
