@@ -1,105 +1,86 @@
 package kz.phoenix.mockgps
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun PointDialog(
-    initialName: String,
-    initialLat: String,
-    initialLon: String,
+internal fun PointDialog(
+    draft: LocationPreset,
+    onChange: (LocationPreset) -> Unit,
     onDismiss: () -> Unit,
-    onSave: (name: String, lat: String, lon: String) -> Unit
+    onMap: () -> Unit,
+    onSave: () -> Unit,
+    onDelete: (() -> Unit)?
 ) {
-    var name by remember { mutableStateOf(initialName) }
-    var lat by remember {
-        mutableStateOf(TextFieldValue(initialLat, TextRange(initialLat.length)))
-    }
-    var lon by remember { mutableStateOf(initialLon) }
-
-    val latValid = Prefs.parseLat(lat.text) != null
-    val lonValid = Prefs.parseLon(lon) != null
-    val latError = lat.text.isNotBlank() && !latValid
-    val lonError = lon.isNotBlank() && !lonValid
+    val latError = draft.latitude.isNotBlank() && Prefs.parseLat(draft.latitude) == null
+    val lonError = draft.longitude.isNotBlank() && Prefs.parseLon(draft.longitude) == null
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Настройка точки") },
+        title = { Text(if (onDelete == null) "Новая точка" else "Настройка точки") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { if (it.length <= 30) name = it },
+                    value = draft.name,
+                    onValueChange = { if (it.length <= 30) onChange(draft.copy(name = it)) },
                     label = { Text("Название") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = lat,
-                    onValueChange = { newValue ->
-                        val isBulkInsert = newValue.text.length - lat.text.length > 1
-                        val split = if (isBulkInsert) Prefs.splitCoords(newValue.text) else null
-                        if (split != null) {
-                            lat = TextFieldValue(split.first, TextRange(split.first.length))
-                            lon = split.second
-                        } else {
-                            lat = newValue
-                        }
+                    value = draft.latitude,
+                    onValueChange = { value ->
+                        val pasted = if (value.length - draft.latitude.length > 1) Prefs.splitCoords(value) else null
+                        onChange(
+                            if (pasted == null) draft.copy(latitude = value)
+                            else draft.copy(latitude = pasted.first, longitude = pasted.second)
+                        )
                     },
                     label = { Text("Широта") },
                     singleLine = true,
                     isError = latError,
-                    supportingText = {
-                        if (latError) Text("Допустимый диапазон: −90…90")
-                    },
+                    supportingText = if (latError) { { Text("Допустимый диапазон: −90…90") } } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = lon,
-                    onValueChange = { lon = it },
+                    value = draft.longitude,
+                    onValueChange = { onChange(draft.copy(longitude = it)) },
                     label = { Text("Долгота") },
                     singleLine = true,
                     isError = lonError,
-                    supportingText = {
-                        if (lonError) Text("Допустимый диапазон: −180…180")
-                    },
+                    supportingText = if (lonError) { { Text("Допустимый диапазон: −180…180") } } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
+                TextButton(onClick = onMap) { Text("Выбрать на карте") }
+                if (onDelete != null) {
+                    TextButton(onClick = onDelete) { Text("Удалить точку") }
+                }
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = { onSave(name, lat.text, lon) },
-                enabled = latValid && lonValid
-            ) {
+            TextButton(onClick = onSave, enabled = draft.coordinates != null) {
                 Text("Сохранить")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Отмена")
-            }
+            TextButton(onClick = onDismiss) { Text("Отмена") }
         }
     )
 }
