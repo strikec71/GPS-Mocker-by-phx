@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://tile.openstreetmap.org data:; base-uri 'none'">
+    <link rel="stylesheet" href="leaflet/leaflet.css">
+    <link rel="stylesheet" href="map.css">
+    <title>OpenStreetMap</title>
+</head>
+<body>
+    <div id="map" aria-label="Карта OpenStreetMap"></div>
+    <div id="pin" aria-hidden="true" hidden></div>
+    <div id="tile-error" role="status" hidden>Не удалось загрузить карту</div>
+    <script src="leaflet/leaflet.js"></script>
+    <script src="map.js"></script>
+</body>
+</html>

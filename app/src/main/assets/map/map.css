@@ -1,0 +1,45 @@
+body {
+    margin: 0;
+}
+
+#map {
+    position: fixed;
+    inset: 0;
+}
+
+#pin {
+    position: fixed;
+    z-index: 500;
+    top: 50%;
+    left: 50%;
+    width: 18px;
+    height: 18px;
+    margin: -24px 0 0 -10px;
+    border: 1px solid white;
+    border-radius: 50% 50% 50% 0;
+    background: #b3261e;
+    box-shadow: 0 1px 3px #0006;
+    transform: rotate(-45deg);
+    pointer-events: none;
+}
+
+#pin::after {
+    content: "";
+    display: block;
+    width: 6px;
+    height: 6px;
+    margin: 6px;
+    border-radius: 50%;
+    background: white;
+}
+
+#tile-error {
+    position: fixed;
+    z-index: 500;
+    right: 8px;
+    bottom: 8px;
+    padding: 4px 8px;
+    background: white;
+    font: 13px sans-serif;
+    pointer-events: none;
+}

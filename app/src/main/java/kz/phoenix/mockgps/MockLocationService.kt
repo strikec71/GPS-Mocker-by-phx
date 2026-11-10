@@ -1,5 +1,6 @@
 package kz.phoenix.mockgps
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -9,6 +10,7 @@ import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationManager
+import android.location.provider.ProviderProperties
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -59,26 +61,29 @@ class MockLocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val initialActive = Prefs.active(prefs)
-        val initialName = if (initialActive != 0) Prefs.name(prefs, initialActive) else ""
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(initialName),
-            if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-        )
-
         if (intent?.action == ACTION_STOP) {
-            Prefs.setActive(prefs, 0)
-            stopSelfCleanup()
+            Prefs.setActive(prefs, Prefs.INACTIVE)
+            stopSelf()
             return START_NOT_STICKY
         }
 
+        val active = Prefs.activePreset(prefs)
         try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(active?.name.orEmpty()),
+                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+            )
+            if (active?.coordinates == null) {
+                Prefs.setActive(prefs, Prefs.INACTIVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
             if (!providersAdded) {
+                providersAdded = true
                 addProviders()
                 runCatching { fused.setMockMode(true) }
-                providersAdded = true
             }
             startTicker()
         } catch (e: SecurityException) {
@@ -86,12 +91,7 @@ class MockLocationService : Service() {
             return START_NOT_STICKY
         }
 
-        return if (Prefs.active(prefs) != 0) {
-            START_STICKY
-        } else {
-            stopSelf()
-            START_NOT_STICKY
-        }
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -99,8 +99,14 @@ class MockLocationService : Service() {
     override fun onDestroy() {
         tickerRunning = false
         handler.removeCallbacks(tickerRunnable)
-        removeProviders()
-        runCatching { fused.setMockMode(false) }
+        if (providersAdded) {
+            removeProviders()
+            try {
+                fused.setMockMode(false)
+            } catch (_: SecurityException) {
+                // Revoking the mock-location role can stop this service.
+            }
+        }
         super.onDestroy()
     }
 
@@ -111,30 +117,28 @@ class MockLocationService : Service() {
     }
 
     private fun tick() {
-        val active = Prefs.active(prefs)
-        if (active == 0) {
+        val active = Prefs.activePreset(prefs)
+        val coordinates = active?.coordinates
+        if (active == null || coordinates == null) {
+            Prefs.setActive(prefs, Prefs.INACTIVE)
             stopSelfCleanup()
             return
         }
 
-        val coords = Prefs.activeCoords(prefs)
-        if (coords != null) {
-            try {
-                feedLocation(coords.first, coords.second)
-            } catch (e: SecurityException) {
-                handleSecurityException()
-                return
+        try {
+            feedLocation(coordinates.latitude, coordinates.longitude)
+            if (active.id != currentActive || active.name != currentName) {
+                currentActive = active.id
+                currentName = active.name
+                updateNotification(active.name)
             }
-        }
-
-        val name = Prefs.name(prefs, active)
-        if (active != currentActive || name != currentName) {
-            currentActive = active
-            currentName = name
-            updateNotification(name)
+        } catch (_: SecurityException) {
+            handleSecurityException()
         }
     }
 
+    // tick handles permission revocation for both the platform and fused providers.
+    @SuppressLint("MissingPermission")
     private fun feedLocation(lat: Double, lon: Double) {
         val now = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtimeNanos()
@@ -179,7 +183,7 @@ class MockLocationService : Service() {
             locationManager.addTestProvider(
                 providerName,
                 false, false, false, false, true, true, true,
-                1, 1
+                ProviderProperties.POWER_USAGE_LOW, ProviderProperties.ACCURACY_FINE
             )
             locationManager.setTestProviderEnabled(providerName, true)
         }
@@ -199,15 +203,13 @@ class MockLocationService : Service() {
             "Приложение снято с роли mock-локации. Подмена остановлена.",
             Toast.LENGTH_LONG
         ).show()
-        Prefs.setActive(prefs, 0)
+        Prefs.setActive(prefs, Prefs.INACTIVE)
         stopSelfCleanup()
     }
 
     private fun stopSelfCleanup() {
         tickerRunning = false
         handler.removeCallbacks(tickerRunnable)
-        removeProviders()
-        runCatching { fused.setMockMode(false) }
         stopSelf()
     }
 
@@ -253,6 +255,9 @@ class MockLocationService : Service() {
     }
 
     private fun updateNotification(activePointName: String) {
-        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(activePointName))
+        val manager = NotificationManagerCompat.from(this)
+        if (manager.areNotificationsEnabled()) {
+            manager.notify(NOTIFICATION_ID, buildNotification(activePointName))
+        }
     }
 }

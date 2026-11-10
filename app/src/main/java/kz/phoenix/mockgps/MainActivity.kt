@@ -1,101 +1,113 @@
 package kz.phoenix.mockgps
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.core.location.LocationCompat
+import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
-
     private lateinit var prefs: SharedPreferences
+    private lateinit var locationManager: LocationManager
 
-    private var active by mutableIntStateOf(0)
-    private var name1 by mutableStateOf("")
-    private var name2 by mutableStateOf("")
-    private var coords1 by mutableStateOf("")
-    private var coords2 by mutableStateOf("")
-    private var lat1Raw by mutableStateOf("")
-    private var lon1Raw by mutableStateOf("")
-    private var lat2Raw by mutableStateOf("")
-    private var lon2Raw by mutableStateOf("")
-    private var point1Valid by mutableStateOf(false)
-    private var point2Valid by mutableStateOf(false)
-
-    private var hasLocationPermission by mutableStateOf(false)
+    private var presets by mutableStateOf(emptyList<LocationPreset>())
+    private var active by mutableStateOf<LocationPreset?>(null)
+    private var devicePosition by mutableStateOf<Coordinates?>(null)
+    private var lastLocationTime = 0L
+    private var hasFinePermission by mutableStateOf(false)
     private var isMockApp by mutableStateOf(false)
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         refreshFromPrefs()
     }
-
+    private val locationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) = onLocation(location)
+        override fun onProviderEnabled(provider: String) = Unit
+        override fun onProviderDisabled(provider: String) = Unit
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+    }
+    // ComponentActivity handles results directly, without FragmentActivity.
+    @SuppressLint("InvalidFragmentVersionForActivityResult")
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            refreshPermissionStatus()
+            refreshLocationAccess()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
         prefs = Prefs.prefs(this)
+        locationManager = getSystemService(LocationManager::class.java)
         refreshFromPrefs()
-        refreshPermissionStatus()
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                Surface(Modifier.fillMaxSize().safeDrawingPadding()) {
                     MainScreen(
+                        presets = presets,
                         active = active,
-                        name1 = name1,
-                        name2 = name2,
-                        coords1 = coords1,
-                        coords2 = coords2,
-                        lat1Raw = lat1Raw,
-                        lon1Raw = lon1Raw,
-                        lat2Raw = lat2Raw,
-                        lon2Raw = lon2Raw,
-                        point1Valid = point1Valid,
-                        point2Valid = point2Valid,
-                        hasLocationPermission = hasLocationPermission,
+                        position = active?.coordinates ?: devicePosition,
+                        hasFinePermission = hasFinePermission,
                         isMockApp = isMockApp,
-                        onRequestPermission = { requestPermissions() },
-                        onOpenMockSettings = { openMockLocationSettings() },
-                        onToggle = { n, checked -> onToggle(n, checked) },
-                        onSavePoint = { n, name, lat, lon -> savePoint(n, name, lat, lon) },
-                        onResume = { refreshPermissionStatus() }
+                        onRequestPermission = ::requestLocationPermission,
+                        onOpenMockSettings = ::openMockLocationSettings,
+                        onToggle = { id, checked ->
+                            if (checked) startMocking { Prefs.setActive(prefs, id) }
+                            else stopMocking()
+                        },
+                        onSave = { Prefs.savePreset(prefs, it) },
+                        onDelete = { id ->
+                            val wasActive = active?.id == id
+                            Prefs.deletePreset(prefs, id)
+                            if (wasActive) stopService(Intent(this, MockLocationService::class.java))
+                        },
+                        onTemporary = { coordinates ->
+                            startMocking { Prefs.activateTemporary(prefs, coordinates) }
+                        },
+                        onStop = ::stopMocking
                     )
                 }
             }
         }
+        if (!hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) &&
+            !prefs.getBoolean("location_permission_requested", false)
+        ) {
+            requestLocationPermission()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshLocationAccess()
+    }
+
+    override fun onPause() {
+        locationManager.removeUpdates(locationListener)
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -104,169 +116,99 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshFromPrefs() {
-        active = Prefs.active(prefs)
-        name1 = Prefs.name(prefs, 1)
-        name2 = Prefs.name(prefs, 2)
-        coords1 = Prefs.coordsText(prefs, 1)
-        coords2 = Prefs.coordsText(prefs, 2)
-        lat1Raw = Prefs.latString(prefs, 1)
-        lon1Raw = Prefs.lonString(prefs, 1)
-        lat2Raw = Prefs.latString(prefs, 2)
-        lon2Raw = Prefs.lonString(prefs, 2)
-        point1Valid = Prefs.isPointValid(prefs, 1)
-        point2Valid = Prefs.isPointValid(prefs, 2)
+        presets = Prefs.presets(prefs)
+        active = Prefs.activePreset(prefs)
     }
 
-    private fun refreshPermissionStatus() {
-        hasLocationPermission = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+    private fun hasPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    @SuppressLint("MissingPermission")
+    private fun refreshLocationAccess() {
+        hasFinePermission = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
         isMockApp = checkMockLocationApp()
+        if (active != null && (!hasFinePermission || !isMockApp)) stopMocking()
+
+        locationManager.removeUpdates(locationListener)
+        if (!hasFinePermission && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            devicePosition = null
+            lastLocationTime = 0L
+            return
+        }
+
+        val providers = if (hasFinePermission) {
+            listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        } else {
+            listOf(LocationManager.NETWORK_PROVIDER)
+        }
+        for (provider in providers) {
+            if (!locationManager.isProviderEnabled(provider)) continue
+            try {
+                locationManager.getLastKnownLocation(provider)?.let(::onLocation)
+                locationManager.requestLocationUpdates(provider, 2_000L, 5f, locationListener)
+            } catch (_: IllegalArgumentException) {
+                // A provider may be unavailable on this device.
+            } catch (_: SecurityException) {
+                // Permission may have changed since the check above.
+            }
+        }
+    }
+
+    private fun onLocation(location: Location) {
+        if (LocationCompat.isMock(location) || location.elapsedRealtimeNanos < lastLocationTime) return
+        lastLocationTime = location.elapsedRealtimeNanos
+        devicePosition = Coordinates(location.latitude, location.longitude)
     }
 
     private fun checkMockLocationApp(): Boolean {
         val appOps = getSystemService(AppOpsManager::class.java)
         val mode = if (Build.VERSION.SDK_INT >= 29) {
-            appOps.unsafeCheckOpNoThrow(
-                AppOpsManager.OPSTR_MOCK_LOCATION,
-                Process.myUid(),
-                packageName
-            )
+            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_MOCK_LOCATION, Process.myUid(), packageName)
         } else {
             @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_MOCK_LOCATION,
-                Process.myUid(),
-                packageName
-            )
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_MOCK_LOCATION, Process.myUid(), packageName)
         }
         return mode == AppOpsManager.MODE_ALLOWED
     }
 
-    private fun requestPermissions() {
-        val perms = mutableListOf(
+    private fun requestLocationPermission() {
+        prefs.edit().putBoolean("location_permission_requested", true).apply()
+        val permissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        if (Build.VERSION.SDK_INT >= 33) {
-            perms.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        permissionLauncher.launch(perms.toTypedArray())
+        if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        permissionLauncher.launch(permissions.toTypedArray())
     }
 
     private fun openMockLocationSettings() {
         startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
     }
 
-    private fun onToggle(n: Int, checked: Boolean) {
-        if (checked) {
-            Prefs.setActive(prefs, n)
+    private fun startMocking(activate: () -> Unit): Boolean {
+        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) || !checkMockLocationApp()) {
+            refreshLocationAccess()
+            return false
+        }
+        activate()
+        return try {
             ContextCompat.startForegroundService(this, Intent(this, MockLocationService::class.java))
-        } else {
-            if (active == n) {
-                Prefs.setActive(prefs, 0)
-                stopService(Intent(this, MockLocationService::class.java))
-            }
+            true
+        } catch (_: SecurityException) {
+            onMockStartFailed()
+        } catch (_: IllegalStateException) {
+            onMockStartFailed()
         }
     }
 
-    private fun savePoint(n: Int, name: String, lat: String, lon: String) {
-        Prefs.savePoint(prefs, n, name, lat, lon)
-    }
-}
-
-@Composable
-private fun MainScreen(
-    active: Int,
-    name1: String,
-    name2: String,
-    coords1: String,
-    coords2: String,
-    lat1Raw: String,
-    lon1Raw: String,
-    lat2Raw: String,
-    lon2Raw: String,
-    point1Valid: Boolean,
-    point2Valid: Boolean,
-    hasLocationPermission: Boolean,
-    isMockApp: Boolean,
-    onRequestPermission: () -> Unit,
-    onOpenMockSettings: () -> Unit,
-    onToggle: (Int, Boolean) -> Unit,
-    onSavePoint: (Int, String, String, String) -> Unit,
-    onResume: () -> Unit
-) {
-    LifecycleResumeEffect(Unit) {
-        onResume()
-        onPauseOrDispose { }
+    private fun onMockStartFailed(): Boolean {
+        stopMocking()
+        Toast.makeText(this, "Не удалось включить подмену", Toast.LENGTH_SHORT).show()
+        return false
     }
 
-    var dialogPoint by remember { mutableStateOf<Int?>(null) }
-
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        if (!hasLocationPermission) {
-            Text("Нет разрешения на геолокацию")
-            Button(onClick = onRequestPermission, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)) {
-                Text("Выдать разрешение")
-            }
-        }
-
-        if (!isMockApp) {
-            Text("Выберите это приложение как mock-приложение в настройках разработчика")
-            Button(onClick = onOpenMockSettings, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)) {
-                Text("Открыть настройки разработчика")
-            }
-        }
-
-        val switch1Enabled = active == 1 || (point1Valid && hasLocationPermission && isMockApp)
-        val switch2Enabled = active == 2 || (point2Valid && hasLocationPermission && isMockApp)
-
-        ListItem(
-            headlineContent = { Text(name1) },
-            supportingContent = { Text(coords1) },
-            trailingContent = {
-                Switch(
-                    checked = active == 1,
-                    onCheckedChange = { checked -> onToggle(1, checked) },
-                    enabled = switch1Enabled
-                )
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { dialogPoint = 1 }
-        )
-
-        ListItem(
-            headlineContent = { Text(name2) },
-            supportingContent = { Text(coords2) },
-            trailingContent = {
-                Switch(
-                    checked = active == 2,
-                    onCheckedChange = { checked -> onToggle(2, checked) },
-                    enabled = switch2Enabled
-                )
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { dialogPoint = 2 }
-        )
-    }
-
-    val pointIndex = dialogPoint
-    if (pointIndex != null) {
-        val currentName = if (pointIndex == 1) name1 else name2
-        val currentLat = if (pointIndex == 1) lat1Raw else lat2Raw
-        val currentLon = if (pointIndex == 1) lon1Raw else lon2Raw
-        PointDialog(
-            initialName = currentName,
-            initialLat = currentLat,
-            initialLon = currentLon,
-            onDismiss = { dialogPoint = null },
-            onSave = { name, lat, lon ->
-                onSavePoint(pointIndex, name, lat, lon)
-                dialogPoint = null
-            }
-        )
+    private fun stopMocking() {
+        Prefs.setActive(prefs, Prefs.INACTIVE)
+        stopService(Intent(this, MockLocationService::class.java))
     }
 }

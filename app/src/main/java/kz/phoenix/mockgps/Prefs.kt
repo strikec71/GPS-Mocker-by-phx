@@ -3,75 +3,107 @@ package kz.phoenix.mockgps
 import android.content.Context
 import android.content.SharedPreferences
 
-object Prefs {
-    const val PREFS_NAME = "mock_gps_prefs"
-    const val KEY_ACTIVE = "active"
+data class Coordinates(val latitude: Double, val longitude: Double) {
+    override fun toString(): String = "$latitude, $longitude"
+}
 
+data class LocationPreset(
+    val id: Int,
+    val name: String,
+    val latitude: String = "",
+    val longitude: String = ""
+) {
+    val coordinates: Coordinates?
+        get() {
+            val lat = Prefs.parseLat(latitude) ?: return null
+            val lon = Prefs.parseLon(longitude) ?: return null
+            return Coordinates(lat, lon)
+        }
+}
+
+object Prefs {
+    const val INACTIVE = 0
+    const val TEMPORARY = -1
+    private const val KEY_ACTIVE = "active"
+    private const val KEY_PRESET_IDS = "preset_ids"
+    private const val KEY_NEXT_ID = "next_preset_id"
+    private val defaultIds = setOf("1", "2")
     private val splitRegex = Regex(""",?\s+""")
 
     fun prefs(context: Context): SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        context.getSharedPreferences("mock_gps_prefs", Context.MODE_PRIVATE)
 
-    fun name(prefs: SharedPreferences, n: Int): String =
-        prefs.getString("name$n", null) ?: "Точка $n"
+    private fun ids(prefs: SharedPreferences): Set<String> =
+        prefs.getStringSet(KEY_PRESET_IDS, defaultIds) ?: defaultIds
 
-    fun latString(prefs: SharedPreferences, n: Int): String =
-        prefs.getString("lat$n", null) ?: ""
+    fun presets(prefs: SharedPreferences): List<LocationPreset> =
+        ids(prefs).map(String::toInt).sorted().map { preset(prefs, it) }
 
-    fun lonString(prefs: SharedPreferences, n: Int): String =
-        prefs.getString("lon$n", null) ?: ""
+    private fun preset(prefs: SharedPreferences, id: Int): LocationPreset = LocationPreset(
+        id = id,
+        name = if (id == TEMPORARY) "Временная точка" else
+            prefs.getString("name$id", null) ?: "Точка $id",
+        latitude = prefs.getString("lat$id", null).orEmpty(),
+        longitude = prefs.getString("lon$id", null).orEmpty()
+    )
 
-    fun active(prefs: SharedPreferences): Int = prefs.getInt(KEY_ACTIVE, 0)
-
-    fun parseLat(raw: String): Double? {
-        val normalized = raw.trim().replace(',', '.')
-        if (normalized.isEmpty()) return null
-        val value = normalized.toDoubleOrNull() ?: return null
-        return if (value in -90.0..90.0) value else null
+    fun activePreset(prefs: SharedPreferences): LocationPreset? {
+        val id = prefs.getInt(KEY_ACTIVE, INACTIVE)
+        return if (id == INACTIVE) null else preset(prefs, id)
     }
 
-    fun parseLon(raw: String): Double? {
-        val normalized = raw.trim().replace(',', '.')
-        if (normalized.isEmpty()) return null
-        val value = normalized.toDoubleOrNull() ?: return null
-        return if (value in -180.0..180.0) value else null
+    fun parseLat(raw: String): Double? =
+        raw.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -90.0..90.0 }
+
+    fun parseLon(raw: String): Double? =
+        raw.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -180.0..180.0 }
+
+    fun splitCoords(raw: String): Pair<String, String>? {
+        val parts = raw.trim().split(splitRegex)
+        if (parts.size != 2 || parseLat(parts[0]) == null || parseLon(parts[1]) == null) return null
+        return parts[0] to parts[1]
     }
 
-    fun splitCoords(s: String): Pair<String, String>? {
-        val parts = s.trim().split(splitRegex).filter { it.isNotBlank() }
-        if (parts.size != 2) return null
-        return Pair(parts[0], parts[1])
+    fun savePreset(prefs: SharedPreferences, draft: LocationPreset) {
+        val coordinates = draft.coordinates ?: return
+        val editor = prefs.edit()
+        val id = if (draft.id == INACTIVE) {
+            val nextId = prefs.getInt(KEY_NEXT_ID, 3)
+            editor.putStringSet(KEY_PRESET_IDS, ids(prefs) + nextId.toString())
+            editor.putInt(KEY_NEXT_ID, nextId + 1)
+            nextId
+        } else {
+            draft.id
+        }
+        editor.putString("name$id", draft.name.trim().ifEmpty { "Точка $id" })
+            .putCoordinates(id, coordinates)
+            .apply()
     }
 
-    fun isPointValid(prefs: SharedPreferences, n: Int): Boolean =
-        parseLat(latString(prefs, n)) != null && parseLon(lonString(prefs, n)) != null
-
-    fun coordsText(prefs: SharedPreferences, n: Int): String {
-        val lat = parseLat(latString(prefs, n))
-        val lon = parseLon(lonString(prefs, n))
-        return if (lat != null && lon != null) "$lat, $lon" else "Координаты не заданы"
+    fun deletePreset(prefs: SharedPreferences, id: Int) {
+        val editor = prefs.edit()
+            .putStringSet(KEY_PRESET_IDS, ids(prefs) - id.toString())
+            .remove("name$id")
+            .remove("lat$id")
+            .remove("lon$id")
+        if (activePreset(prefs)?.id == id) editor.putInt(KEY_ACTIVE, INACTIVE)
+        editor.apply()
     }
 
-    fun savePoint(prefs: SharedPreferences, n: Int, name: String, lat: String, lon: String) {
-        val resolvedName = name.trim().ifEmpty { "Точка $n" }
-        val normalizedLat = lat.trim().replace(',', '.')
-        val normalizedLon = lon.trim().replace(',', '.')
-        prefs.edit()
-            .putString("name$n", resolvedName)
-            .putString("lat$n", normalizedLat)
-            .putString("lon$n", normalizedLon)
-            .commit()
+    fun setActive(prefs: SharedPreferences, id: Int) {
+        prefs.edit().putInt(KEY_ACTIVE, id)
+            .remove("lat$TEMPORARY")
+            .remove("lon$TEMPORARY")
+            .apply()
     }
 
-    fun setActive(prefs: SharedPreferences, n: Int) {
-        prefs.edit().putInt(KEY_ACTIVE, n).commit()
+    fun activateTemporary(prefs: SharedPreferences, coordinates: Coordinates) {
+        prefs.edit().putInt(KEY_ACTIVE, TEMPORARY)
+            .putCoordinates(TEMPORARY, coordinates)
+            .apply()
     }
 
-    fun activeCoords(prefs: SharedPreferences): Pair<Double, Double>? {
-        val active = active(prefs)
-        if (active == 0) return null
-        val lat = parseLat(latString(prefs, active)) ?: return null
-        val lon = parseLon(lonString(prefs, active)) ?: return null
-        return Pair(lat, lon)
-    }
+    private fun SharedPreferences.Editor.putCoordinates(id: Int, coordinates: Coordinates) =
+        putString("lat$id", coordinates.latitude.toString())
+            .putString("lon$id", coordinates.longitude.toString())
 }
