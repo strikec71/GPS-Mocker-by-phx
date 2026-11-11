@@ -1,24 +1,11 @@
 package kz.phoenix.mockgps
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,9 +18,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 
@@ -77,64 +61,14 @@ internal fun MainScreen(
     val activeLabel = temporaryAddress ?: active?.name
 
     if (mode == MapMode.HOME) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            Column(Modifier.weight(0.55f)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Mock GPS", style = MaterialTheme.typography.titleLarge)
-                    TextButton(onClick = { draft = LocationPreset(Prefs.INACTIVE, "") }) {
-                        Text("+ Добавить точку")
-                    }
-                }
-                LazyColumn {
-                    if (!hasFinePermission) {
-                        item {
-                            Text("Для подмены нужен доступ к точной геолокации")
-                            TextButton(onClick = onRequestPermission) { Text("Выдать разрешение") }
-                        }
-                    }
-                    if (!isMockApp) {
-                        item {
-                            Text("Выберите Mock GPS как приложение для фиктивных местоположений")
-                            TextButton(onClick = onOpenMockSettings) { Text("Настройки разработчика") }
-                        }
-                    }
-                    if (presets.isEmpty()) {
-                        item { Text("Сохранённых точек пока нет") }
-                    }
-                    items(presets, key = { it.id }) { preset ->
-                        PresetSwitch(
-                            preset = preset,
-                            checked = active?.id == preset.id,
-                            canMock = canMock,
-                            onEdit = { draft = preset },
-                            onToggle = { onToggle(preset.id, it) }
-                        )
-                    }
-                }
-            }
-
-            HorizontalDivider()
-            Column(Modifier.weight(0.45f)) {
-                PositionLabel(position, activeLabel)
-                if (active != null) StopButton(onStop)
-                LocationMap(
-                    position = position,
-                    mocked = active != null,
-                    modifier = Modifier.fillMaxSize(),
-                    previewOverlay = {
-                        Box(
-                            Modifier.fillMaxSize()
-                                .semantics { contentDescription = "Открыть карту" }
-                                .clickable(role = Role.Button) { mode = MapMode.OVERVIEW }
-                        )
-                    }
-                )
-            }
-        }
+        Dashboard(
+            presets = presets, active = active, position = position, activeLabel = activeLabel,
+            hasFinePermission = hasFinePermission, isMockApp = isMockApp,
+            onRequestPermission = onRequestPermission, onOpenMockSettings = onOpenMockSettings,
+            onAdd = { draft = LocationPreset(Prefs.INACTIVE, "") },
+            onEdit = { draft = it }, onToggle = onToggle,
+            onMap = { mode = MapMode.OVERVIEW }, onStop = onStop
+        )
 
         draft?.let { point ->
             PointDialog(
@@ -170,8 +104,8 @@ internal fun MainScreen(
             onSave = { coordinates ->
                 val point = draft ?: LocationPreset(Prefs.INACTIVE, "")
                 draft = point.copy(
-                    latitude = coordinates.latitude.toString(),
-                    longitude = coordinates.longitude.toString()
+                    latitude = String.format(Locale.ROOT, "%.6f", coordinates.latitude),
+                    longitude = String.format(Locale.ROOT, "%.6f", coordinates.longitude)
                 )
                 mode = MapMode.HOME
             },
@@ -181,30 +115,6 @@ internal fun MainScreen(
             onStop = onStop
         )
     }
-}
-
-@Composable
-private fun PresetSwitch(
-    preset: LocationPreset,
-    checked: Boolean,
-    canMock: Boolean,
-    onEdit: () -> Unit,
-    onToggle: (Boolean) -> Unit
-) {
-    val coordinates = preset.coordinates
-    ListItem(
-        headlineContent = { Text(preset.name) },
-        supportingContent = { Text(coordinates?.toString() ?: "Координаты не заданы") },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onToggle,
-                enabled = checked || (coordinates != null && canMock),
-                modifier = Modifier.semantics { contentDescription = "Подмена: ${preset.name}" }
-            )
-        },
-        modifier = Modifier.clickable(onClickLabel = "Настроить точку", onClick = onEdit)
-    )
 }
 
 @Composable
@@ -241,65 +151,55 @@ private fun FullMapScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("Назад") }
-            Text(
-                if (selecting) "Выбор точки" else "Карта",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.weight(1f).padding(start = 8.dp)
-            )
-            TextButton(onClick = { searchOpen = true }, enabled = webView != null) {
-                Text("Поиск адреса")
-            }
-        }
-        if (selecting) {
-            Text("Переместите карту под маркером")
-        } else {
-            PositionLabel(position, activeLabel)
-        }
-        if (activeLabel != null) StopButton(onStop)
+    Box(Modifier.fillMaxSize()) {
         LocationMap(
-            position = position,
-            mocked = activeLabel != null,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            interactive = true,
-            selecting = selecting,
-            initialCamera = camera,
-            onCameraChanged = { camera = it },
-            onReady = { webView = it }
+            position = position, mocked = activeLabel != null, modifier = Modifier.fillMaxSize(),
+            interactive = true, selecting = selecting, initialCamera = camera,
+            onCameraChanged = { camera = it }, onReady = { webView = it }
         )
-        if (failed) Text("Не удалось определить координаты точки. Попробуйте ещё раз.")
-        val ready = webView != null && !reading
-        when (mode) {
-            MapMode.OVERVIEW -> {
-                Button(onClick = onPick, enabled = ready, modifier = Modifier.fillMaxWidth()) {
-                    Text("Выбрать точку")
-                }
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            MapAction(AppIcons.Back, "Назад", onBack)
+            MapAction(AppIcons.Search, "Поиск адреса", { searchOpen = true }, enabled = webView != null)
+        }
+        Column(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            MapAction(AppIcons.Add, "Приблизить", { webView?.zoomBy(1) }, enabled = webView != null)
+            MapAction(AppIcons.Minus, "Отдалить", { webView?.zoomBy(-1) }, enabled = webView != null)
+        }
+        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, bottom = 56.dp).widthIn(max = 480.dp)
+            .heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (failed) Surface(shape = RoundedCornerShape(16.dp)) {
+                Text("Не удалось определить координаты. Попробуйте ещё раз.", Modifier.padding(12.dp))
             }
-            MapMode.PRESET_PICKER -> {
-                Button(onClick = { readCenter(onSave) }, enabled = ready, modifier = Modifier.fillMaxWidth()) {
-                    Text("Подтвердить точку")
+            val ready = webView != null && !reading
+            when (mode) {
+                MapMode.OVERVIEW -> {
+                    MapAction(AppIcons.Pin, "Выбрать точку", onPick, enabled = ready, prominent = true)
+                    Surface(shape = RoundedCornerShape(22.dp), shadowElevation = 4.dp,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        PositionStrip(activeLabel, position, activeLabel != null, onStop,
+                            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp))
+                    }
                 }
+                MapMode.PRESET_PICKER -> MapAction(AppIcons.Check, "Подтвердить точку",
+                    { readCenter(onSave) }, enabled = ready, prominent = true)
+                MapMode.TEMPORARY_PICKER -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        MapAction(AppIcons.Save, "Сохранить как новое место", { readCenter(onSave) }, enabled = ready)
+                        MapAction(AppIcons.Power, "Включить временно", { readCenter(onTemporary) },
+                            enabled = ready && canMock, prominent = true)
+                    }
+                    if (!canMock) Surface(shape = RoundedCornerShape(16.dp)) {
+                        Text("Для подмены завершите настройку на главном экране.", Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                MapMode.HOME -> Unit
             }
-            MapMode.TEMPORARY_PICKER -> {
-                Button(
-                    onClick = { readCenter(onTemporary) },
-                    enabled = ready && canMock,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Включить временно")
-                }
-                OutlinedButton(
-                    onClick = { readCenter(onSave) },
-                    enabled = ready,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Сохранить как новую точку")
-                }
-                if (!canMock) Text("Для подмены выдайте разрешения на главном экране")
-            }
-            MapMode.HOME -> Unit
         }
     }
     if (searchOpen && webView != null) {
@@ -311,28 +211,5 @@ private fun FullMapScreen(
                 searchOpen = false
             }
         )
-    }
-}
-
-@Composable
-private fun PositionLabel(position: Coordinates?, activeLabel: String?) {
-    val coordinates = position?.let { String.format(Locale.ROOT, "%.5f, %.5f", it.latitude, it.longitude) }
-    val label = when {
-        activeLabel != null && coordinates != null -> "Подмена активна: $activeLabel ($coordinates)"
-        activeLabel != null -> "Подмена активна: $activeLabel"
-        coordinates != null -> "Текущее местоположение: $coordinates"
-        else -> "Местоположение пока недоступно"
-    }
-    Text(
-        label,
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(vertical = 6.dp)
-    )
-}
-
-@Composable
-private fun StopButton(onStop: () -> Unit) {
-    Button(onClick = onStop, modifier = Modifier.fillMaxWidth()) {
-        Text("Отключить подмену")
     }
 }

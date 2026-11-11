@@ -7,16 +7,20 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
@@ -37,29 +41,36 @@ internal fun LocationMap(
     val latestCameraChanged = rememberUpdatedState(onCameraChanged)
     val latestReady = rememberUpdatedState(onReady)
 
-    Column(modifier) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            AndroidView(
-                factory = { context ->
-                    MapWebView(
-                        context, interactive, initialCamera,
-                        onCameraChanged = { latestCameraChanged.value(it) },
-                        onReady = { latestReady.value(it) }
-                    )
-                },
-                update = { it.render(position, mocked, selecting) },
-                onRelease = { it.release() },
-                modifier = Modifier.matchParentSize()
-            )
-            previewOverlay()
+    val dark = isSystemInDarkTheme()
+    Box(modifier) {
+        AndroidView(
+            factory = { context ->
+                MapWebView(context, interactive, initialCamera,
+                    onCameraChanged = { latestCameraChanged.value(it) },
+                    onReady = { latestReady.value(it) })
+            },
+            update = { it.render(position, mocked, selecting, dark) },
+            onRelease = { it.release() }, modifier = Modifier.matchParentSize()
+        )
+        previewOverlay()
+        Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+            .height(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp)
+            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), Color.Transparent))))
+        // Keep a 48 dp hit target while painting only the compact credit label.
+        Box(modifier = Modifier.align(Alignment.BottomEnd)
+            .then(if (interactive) Modifier.navigationBarsPadding() else Modifier)
+            .padding(end = 6.dp, bottom = 2.dp).heightIn(min = 48.dp)
+            .clickable(onClickLabel = "Об OpenStreetMap") {
+                uriHandler.openUri("https://www.openstreetmap.org/copyright")
+            }, contentAlignment = Alignment.BottomEnd) {
+            Text("© OpenStreetMap", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), RoundedCornerShape(5.dp))
+                    .padding(horizontal = 6.dp, vertical = 3.dp))
         }
-        TextButton(
-            onClick = { uriHandler.openUri("https://www.openstreetmap.org/copyright") },
-            modifier = Modifier.align(Alignment.End)
-        ) {
-            Text("© OpenStreetMap contributors")
-        }
+
     }
+
 }
 
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
@@ -75,6 +86,7 @@ internal class MapWebView(
     private var position: Coordinates? = null
     private var mocked = false
     private var selecting = false
+    private var dark = false
 
     init {
         val loader = WebViewAssetLoader.Builder()
@@ -112,13 +124,18 @@ internal class MapWebView(
                 ready = true
                 updatePosition()
                 updateSelection()
+                updateAppearance()
                 onReady(this@MapWebView)
             }
         }
         loadUrl(MAP_URL)
     }
 
-    fun render(position: Coordinates?, mocked: Boolean, selecting: Boolean) {
+    fun render(position: Coordinates?, mocked: Boolean, selecting: Boolean, dark: Boolean) {
+        if (this.dark != dark) {
+            this.dark = dark
+            if (ready) updateAppearance()
+        }
         if (this.position != position || this.mocked != mocked) {
             this.position = position
             this.mocked = mocked
@@ -130,6 +147,10 @@ internal class MapWebView(
         }
     }
 
+    private fun updateAppearance() {
+        evaluateJavascript("setAppearance($dark)", null)
+    }
+
     private fun updatePosition() {
         val point = position?.let { "[${it.latitude}, ${it.longitude}]" } ?: "null"
         evaluateJavascript("showPosition($point, $mocked)", null)
@@ -137,6 +158,10 @@ internal class MapWebView(
 
     private fun updateSelection() {
         evaluateJavascript("showSelection($selecting)", null)
+    }
+
+    fun zoomBy(delta: Int) {
+        if (ready && !released) evaluateJavascript("map.setZoom(map.getZoom() + ${delta.coerceIn(-1, 1)}, {animate: false})", null)
     }
 
     fun centerOn(point: Coordinates) {

@@ -43,3 +43,26 @@ body {
     font: 13px sans-serif;
     pointer-events: none;
 }
+
+/* Muted cartography lets the location signal and native controls stay prominent. */
+.leaflet-tile-pane {
+    filter: saturate(0.38) contrast(0.92) brightness(1.04);
+}
+.leaflet-container { background: #e6e9ed; }
+body.dark .leaflet-tile-pane {
+    filter: invert(0.94) hue-rotate(180deg) saturate(0.24) brightness(1.1) contrast(0.88);
+}
+body.dark .leaflet-container { background: #18212b; }
+#pin { background: #245dc1; border-width: 2px; box-shadow: 0 3px 12px #152c4a40; }
+#tile-error {
+    right: auto;
+    left: 12px;
+    bottom: 12px;
+    max-width: calc(100% - 48px);
+    padding: 8px 12px;
+    border-radius: 12px;
+    color: #263648;
+    background: #fffffff2;
+}
+body.dark #tile-error { color: #e7eef8; background: #192535f2; }
+.leaflet-control-zoom { display: none; }

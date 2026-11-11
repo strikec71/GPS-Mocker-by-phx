@@ -17,6 +17,9 @@ function setupMap(canInteract, camera) {
     map = L.map("map", {
         center,
         zoom: camera ? camera[2] : 2,
+        zoomAnimation: false,
+        fadeAnimation: false,
+        markerZoomAnimation: false,
         minZoom: 2,
         maxZoom: 19,
         maxBounds: [[-maxLatitude, -1080], [maxLatitude, 1080]],
@@ -60,7 +63,7 @@ function showPosition(position, mocked) {
         radius: 7,
         color: "#fff",
         weight: 2,
-        fillColor: mocked ? "#b3261e" : "#1769aa",
+        fillColor: mocked ? "#245dc1" : "#64748b",
         fillOpacity: 1,
         interactive: false
     }).addTo(map);
@@ -87,4 +90,8 @@ function selectedPosition() {
 function centerOn(latitude, longitude) {
     focused = true;
     map.setView(mapPoint(latitude, longitude), Math.max(map.getZoom(), 16), { animate: false });
+}
+
+function setAppearance(dark) {
+    document.body.classList.toggle("dark", dark);
 }

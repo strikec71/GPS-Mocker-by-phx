@@ -2,11 +2,21 @@ package kz.phoenix.mockgps
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -24,12 +34,14 @@ internal fun PointDialog(
     onSave: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
+    var confirmDelete by rememberSaveable(draft.id) { mutableStateOf(false) }
     val latError = draft.latitude.isNotBlank() && Prefs.parseLat(draft.latitude) == null
     val lonError = draft.longitude.isNotBlank() && Prefs.parseLon(draft.longitude) == null
 
-    AlertDialog(
+    if (!confirmDelete) AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (onDelete == null) "Новая точка" else "Настройка точки") },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -54,7 +66,7 @@ internal fun PointDialog(
                     label = { Text("Широта") },
                     singleLine = true,
                     isError = latError,
-                    supportingText = if (latError) { { Text("Допустимый диапазон: −90…90") } } else null,
+                    supportingText = if (latError) { { Text("−90…90") } } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -68,10 +80,15 @@ internal fun PointDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
-                TextButton(onClick = onMap) { Text("Выбрать на карте") }
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("Удалить точку") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    IconButton(onClick = onMap) {
+                        Icon(AppIcons.Pin, contentDescription = "Выбрать на карте")
+                    }
+                    if (onDelete != null) IconButton(onClick = { confirmDelete = true }) {
+                        Icon(AppIcons.Trash, contentDescription = "Удалить место", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
+
             }
         },
         confirmButton = {
@@ -83,4 +100,15 @@ internal fun PointDialog(
             TextButton(onClick = onDismiss) { Text("Отмена") }
         }
     )
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Удалить место?") },
+        text = { Text("«${draft.name.ifBlank { "Без названия" }}» будет удалено из сохранённых мест. Если подмена включена для этого места, она остановится.") },
+        confirmButton = {
+            TextButton(onClick = { onDelete?.invoke() },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Удалить") }
+        },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Отмена") } }
+    )
+
 }

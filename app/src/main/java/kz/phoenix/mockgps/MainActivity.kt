@@ -16,10 +16,10 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationCompat
-import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var prefs: SharedPreferences
@@ -58,47 +57,45 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
+        enableEdgeToEdge()
         prefs = Prefs.prefs(this)
         locationManager = getSystemService(LocationManager::class.java)
         refreshFromPrefs()
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
         setContent {
-            MaterialTheme {
-                Surface(Modifier.fillMaxSize().safeDrawingPadding()) {
-                    MainScreen(
-                        presets = presets,
-                        active = active,
-                        position = active?.coordinates ?: devicePosition,
-                        searchOrigin = devicePosition,
-                        hasFinePermission = hasFinePermission,
-                        isMockApp = isMockApp,
-                        onRequestPermission = ::requestLocationPermission,
-                        onOpenMockSettings = ::openMockLocationSettings,
-                        onToggle = { id, checked ->
-                            if (checked) startMocking { Prefs.setActive(prefs, id) }
-                            else stopMocking()
-                        },
-                        onSave = { Prefs.savePreset(prefs, it) },
-                        onDelete = { id ->
-                            val wasActive = active?.id == id
-                            Prefs.deletePreset(prefs, id)
-                            if (wasActive) stopService(Intent(this, MockLocationService::class.java))
-                        },
-                        onTemporary = { coordinates ->
-                            startMocking { Prefs.activateTemporary(prefs, coordinates) }
-                        },
-                        onStop = ::stopMocking
-                    )
+            MockGpsTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize()) {
+                        MainScreen(
+                            presets = presets,
+                            active = active,
+                            position = active?.coordinates ?: devicePosition,
+                            searchOrigin = devicePosition,
+                            hasFinePermission = hasFinePermission,
+                            isMockApp = isMockApp,
+                            onRequestPermission = ::requestLocationPermission,
+                            onOpenMockSettings = ::openMockLocationSettings,
+                            onToggle = { id, checked ->
+                                if (checked) startMocking { Prefs.setActive(prefs, id) }
+                                else stopMocking()
+                            },
+                            onSave = { Prefs.savePreset(prefs, it) },
+                            onDelete = { id ->
+                                val wasActive = active?.id == id
+                                Prefs.deletePreset(prefs, id)
+                                if (wasActive) stopService(Intent(this@MainActivity, MockLocationService::class.java))
+                            },
+                            onTemporary = { coordinates ->
+                                startMocking { Prefs.activateTemporary(prefs, coordinates) }
+                            },
+                            onStop = ::stopMocking
+                        )
+                    }
                 }
             }
         }
-        if (!hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) &&
-            !prefs.getBoolean("location_permission_requested", false)
-        ) {
-            requestLocationPermission()
-        }
+
     }
 
     override fun onResume() {
